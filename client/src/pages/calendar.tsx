@@ -15,7 +15,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format, addDays, startOfWeek, isSameDay, parseISO, isAfter, startOfDay } from 'date-fns';
 import { it } from 'date-fns/locale';
-import { Clock, User as UserIcon, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Clock, User as UserIcon, CheckCircle2, AlertCircle, Hourglass } from 'lucide-react';
+import { bookedCount, slotWaitlist, waitlistPosition } from '@/lib/booking-logic';
 import { cn } from '@/lib/utils';
 import { useLocation } from 'wouter';
 
@@ -30,7 +31,7 @@ const DAYS_MAP: Record<string, number> = {
 const DAYS = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì'];
 
 export default function CalendarPage() {
-  const { schedule, courses, bookClass, user, bookings } = useApp();
+  const { schedule, courses, bookClass, leaveWaitlist, user, bookings, waitlist } = useApp();
   const [openBookingId, setOpenBookingId] = useState<string | null>(null);
   const [, setLocation] = useLocation();
 
@@ -66,12 +67,13 @@ export default function CalendarPage() {
     .filter(s => s.day === selectedDay)
     .sort((a, b) => a.time.localeCompare(b.time));
 
+  const bookingDate = format(targetBookingDate, 'yyyy-MM-dd');
+
   const handleBook = (scheduleId: string) => {
     if (!user) {
       setLocation('/login');
       return;
     }
-    const bookingDate = format(targetBookingDate, 'yyyy-MM-dd');
     bookClass(scheduleId, bookingDate);
     setOpenBookingId(null);
   };
@@ -131,10 +133,19 @@ export default function CalendarPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredSchedule.map((slot) => {
             const course = getCourseDetails(slot.courseId);
-            const isBooked = user && bookings.some(b => b.scheduleId === slot.id);
-            const currentBookingsCount = bookings.filter(b => b.scheduleId === slot.id).length;
-            const remainingSpots = slot.capacity - currentBookingsCount;
-            const isFull = remainingSpots <= 0;
+            // Only the bookable date matters here: counts and status are per class instance
+            const state = { bookings, waitlist };
+            const isBooked = !!user && bookings.some(
+              b => b.userId === user.id && b.scheduleId === slot.id && b.date === bookingDate
+            );
+            const myWaitPos = user ? waitlistPosition(state, user.id, slot.id, bookingDate) : null;
+            const myWaitEntry = myWaitPos !== null
+              ? slotWaitlist(state, slot.id, bookingDate)[myWaitPos - 1]
+              : null;
+            const queueLength = slotWaitlist(state, slot.id, bookingDate).length;
+            const remainingSpots = Math.max(0, slot.capacity - bookedCount(state, slot.id, bookingDate));
+            // A spot freed while people are waiting goes to them, never to a newcomer
+            const isFull = remainingSpots <= 0 || queueLength > 0;
             const canBookNow = isBookingAllowedForDay(selectedDay);
             
             if (!course) return null;
@@ -155,11 +166,17 @@ export default function CalendarPage() {
                     </div>
                     {isBooked ? (
                       <Badge className="bg-green-500 text-black font-bold uppercase">Prenotato</Badge>
-                    ) : isFull ? (
-                      <Badge variant="destructive" className="font-bold uppercase">Esaurito</Badge>
+                    ) : myWaitPos !== null ? (
+                      <Badge className="bg-sky-500/15 text-sky-300 border border-sky-500/30 font-bold uppercase">
+                        In attesa · n° {myWaitPos}
+                      </Badge>
+                    ) : canBookNow && isFull ? (
+                      <Badge variant="destructive" className="font-bold uppercase">
+                        Esaurito{queueLength > 0 ? ` · ${queueLength} in attesa` : ''}
+                      </Badge>
                     ) : canBookNow ? (
                       <Badge variant="outline" className="text-primary border-primary/20 bg-primary/5">
-                        {remainingSpots} posti disponibili
+                        {remainingSpots === 1 ? "1 posto disponibile" : `${remainingSpots} posti disponibili`}
                       </Badge>
                     ) : (
                       <Badge variant="secondary" className="text-[10px] uppercase font-bold bg-white/5">Non Prenotabile</Badge>
@@ -185,22 +202,38 @@ export default function CalendarPage() {
                       <AlertCircle className="h-3 w-3" />
                       Prenotazioni aperte solo il giorno precedente
                     </div>
+                  ) : myWaitEntry ? (
+                    <div className="space-y-2">
+                      <p className="flex items-center gap-2 text-xs text-sky-300/90 bg-sky-500/5 p-2 rounded border border-sky-500/15">
+                        <Hourglass className="h-3 w-3 shrink-0" />
+                        Se si libera un posto verrai iscritto automaticamente e riceverai una notifica.
+                      </p>
+                      <Button
+                        variant="outline"
+                        className="w-full font-bold uppercase tracking-wider border-white/15"
+                        onClick={() => leaveWaitlist(myWaitEntry.id)}
+                      >
+                        Esci dalla lista d'attesa
+                      </Button>
+                    </div>
                   ) : (
                     <Dialog open={openBookingId === slot.id} onOpenChange={(open) => setOpenBookingId(open ? slot.id : null)}>
                       <DialogTrigger asChild>
                         <Button 
-                          disabled={!!isBooked || isFull}
+                          disabled={isBooked}
                           className={cn(
                             "w-full font-bold uppercase tracking-wider",
-                            (isBooked || isFull)
-                              ? "bg-white/10 text-gray-500 cursor-not-allowed hover:bg-white/10" 
-                              : "bg-primary text-black hover:bg-primary/90 hover:scale-[1.02] transition-transform shadow-[0_0_15px_rgba(204,255,0,0.2)]"
+                            isBooked
+                              ? "bg-white/10 text-gray-500 cursor-not-allowed hover:bg-white/10"
+                              : isFull
+                                ? "bg-sky-500/15 text-sky-200 border border-sky-500/30 hover:bg-sky-500/25"
+                                : "bg-primary text-black hover:bg-primary/90 hover:scale-[1.02] transition-transform shadow-[0_0_15px_rgba(204,255,0,0.2)]"
                           )}
                         >
                           {isBooked ? (
                             <span className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> Iscritto</span>
                           ) : isFull ? (
-                            "Posti Esauriti"
+                            <span className="flex items-center gap-2"><Hourglass className="h-4 w-4" /> Entra in lista d'attesa</span>
                           ) : (
                             "Prenota per Domani"
                           )}
@@ -208,9 +241,14 @@ export default function CalendarPage() {
                       </DialogTrigger>
                       <DialogContent className="border-white/10 bg-card/95 backdrop-blur-xl">
                         <DialogHeader>
-                          <DialogTitle className="font-display uppercase italic text-2xl">Conferma Prenotazione</DialogTitle>
+                          <DialogTitle className="font-display uppercase italic text-2xl">
+                            {isFull ? "Lista d'attesa" : "Conferma Prenotazione"}
+                          </DialogTitle>
                           <DialogDescription>
-                            Stai prenotando per <span className="text-primary font-bold">{capitalizedTargetName}, {format(targetBookingDate, 'd MMMM', { locale: it })}</span>.
+                            {isFull
+                              ? "Il corso è pieno. Se qualcuno disdice, il posto va al primo in lista e vieni iscritto automaticamente. "
+                              : null}
+                            {isFull ? "Lezione di" : "Stai prenotando per"} <span className="text-primary font-bold">{capitalizedTargetName}, {format(targetBookingDate, 'd MMMM', { locale: it })}</span>.
                           </DialogDescription>
                         </DialogHeader>
                         
@@ -229,8 +267,10 @@ export default function CalendarPage() {
                               <span className="text-white">{selectedDay}, {slot.time}</span>
                             </div>
                             <div className="flex justify-between pt-2 border-t border-white/5">
-                              <span className="text-muted-foreground">Posti rimanenti:</span>
-                              <span className="text-primary font-bold">{remainingSpots}</span>
+                              <span className="text-muted-foreground">{isFull ? "La tua posizione:" : "Posti rimanenti:"}</span>
+                              <span className="text-primary font-bold">
+                                {isFull ? `n° ${queueLength + 1}` : `${remainingSpots} su ${slot.capacity}`}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -238,7 +278,7 @@ export default function CalendarPage() {
                         <DialogFooter>
                           <Button variant="ghost" onClick={() => setOpenBookingId(null)}>Annulla</Button>
                           <Button className="bg-primary text-black font-bold uppercase" onClick={() => handleBook(slot.id)}>
-                            Conferma Prenotazione
+                            {isFull ? "Mettimi in lista" : "Conferma Prenotazione"}
                           </Button>
                         </DialogFooter>
                       </DialogContent>

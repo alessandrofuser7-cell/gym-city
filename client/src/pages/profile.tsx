@@ -4,12 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarDays, Trash2, Trophy, Flame, History } from 'lucide-react';
+import { CalendarDays, Trash2, Trophy, Flame, History, Hourglass } from 'lucide-react';
+import { waitlistPosition } from '@/lib/booking-logic';
 import { useLocation } from 'wouter';
 import patternImage from '@assets/generated_images/sporty_abstract_geometric_pattern_dark_neon_green.png';
 
 export default function ProfilePage() {
-  const { user, bookings, courses, schedule, cancelBooking } = useApp();
+  const { user, bookings, waitlist, courses, schedule, cancelBooking, leaveWaitlist } = useApp();
   const [, setLocation] = useLocation();
 
   if (!user) {
@@ -26,6 +27,16 @@ export default function ProfilePage() {
       return { ...b, slot, course };
     })
     .filter(item => item.slot && item.course); // Remove invalid refs
+
+  const myWaitlist = waitlist
+    .filter(w => w.userId === user.id)
+    .map(w => {
+      const slot = schedule.find(s => s.id === w.scheduleId);
+      const course = slot ? courses.find(c => c.id === slot.courseId) : null;
+      const position = waitlistPosition({ bookings, waitlist }, user.id, w.scheduleId, w.date);
+      return { ...w, slot, course, position };
+    })
+    .filter(item => item.slot && item.course);
 
   return (
     <div className="min-h-screen bg-background relative">
@@ -74,6 +85,33 @@ export default function ProfilePage() {
           </TabsList>
 
           <TabsContent value="upcoming" className="space-y-4">
+            {myWaitlist.map((entry) => (
+              <Card key={entry.id} className="bg-sky-950/10 border border-sky-500/20">
+                <CardContent className="p-6 flex flex-col md:flex-row items-center justify-between gap-6">
+                  <div className="flex items-center gap-6">
+                    <div className="h-16 w-16 rounded-full flex items-center justify-center bg-zinc-800 border-2 border-sky-500/30">
+                      <Hourglass className="h-8 w-8 text-sky-300" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-sky-300 mb-1">
+                        Lista d'attesa · posizione n° {entry.position}
+                      </p>
+                      <h3 className="text-xl font-display font-bold uppercase italic text-white mb-1">{entry.course?.name}</h3>
+                      <p className="text-muted-foreground flex items-center gap-2">
+                        <span className="text-primary font-bold">{entry.slot?.day}</span> • {entry.slot?.time} • con {entry.slot?.instructor}
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="w-full md:w-auto border-white/15"
+                    onClick={() => leaveWaitlist(entry.id)}
+                  >
+                    Esci dalla lista
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
             {myBookings.length > 0 ? (
               myBookings.map((booking) => (
                 <Card key={booking.id} className="bg-card hover:bg-card/80 border border-white/10 transition-colors group">
@@ -100,7 +138,7 @@ export default function ProfilePage() {
                   </CardContent>
                 </Card>
               ))
-            ) : (
+            ) : myWaitlist.length > 0 ? null : (
               <div className="text-center py-20 border border-dashed border-white/10 rounded-2xl bg-card/20">
                 <CalendarDays className="h-16 w-16 text-muted-foreground mx-auto mb-4 opacity-50" />
                 <h3 className="text-xl font-bold text-white mb-2">Nessuna prenotazione attiva</h3>

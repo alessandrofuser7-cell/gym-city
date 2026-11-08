@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Bell, Check, CheckCheck, Trash2, Clock, AlertTriangle, XCircle, Sparkles, Info, CalendarCheck, CalendarX } from 'lucide-react';
+import { Bell, Check, CheckCheck, Trash2, Clock, AlertTriangle, XCircle, Sparkles, Info, CalendarCheck, CalendarX, Hourglass, PartyPopper } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,6 +14,8 @@ const TYPE_ICONS: Record<NotificationType, React.ComponentType<{ className?: str
   booking_confirmed: CalendarCheck,
   booking_cancelled: CalendarX,
   booking_reminder: Clock,
+  waitlist_joined: Hourglass,
+  waitlist_promoted: PartyPopper,
   admin_message: Bell,
   info: Info,
 };
@@ -25,6 +27,8 @@ const TYPE_COLORS: Record<NotificationType, string> = {
   booking_confirmed: 'text-green-400 bg-green-500/10 border-green-500/20',
   booking_cancelled: 'text-orange-400 bg-orange-500/10 border-orange-500/20',
   booking_reminder: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
+  waitlist_joined: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
+  waitlist_promoted: 'text-green-400 bg-green-500/10 border-green-500/20',
   admin_message: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
   info: 'text-muted-foreground bg-white/5 border-white/10',
 };

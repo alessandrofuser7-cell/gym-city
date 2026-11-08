@@ -1,5 +1,16 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useRef } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import {
+  COURSE_CAPACITY,
+  requestBooking,
+  cancelBooking as cancelBookingRule,
+  leaveWaitlist as leaveWaitlistRule,
+  type Booking,
+  type BookingState,
+  type WaitlistEntry,
+} from '@/lib/booking-logic';
+
+export type { Booking, WaitlistEntry } from '@/lib/booking-logic';
 
 // Types
 export type User = {
@@ -27,13 +38,6 @@ export type ScheduleItem = {
   capacity: number;
 };
 
-export type Booking = {
-  id: string;
-  userId: string;
-  scheduleId: string;
-  date: string; // ISO date string for the specific instance
-};
-
 export type NotificationType =
   | 'subscription_expired'
   | 'subscription_expiring'
@@ -41,6 +45,8 @@ export type NotificationType =
   | 'booking_confirmed'
   | 'booking_cancelled'
   | 'booking_reminder'
+  | 'waitlist_joined'
+  | 'waitlist_promoted'
   | 'admin_message'
   | 'info';
 
@@ -70,45 +76,45 @@ const COURSES: Course[] = [
   { id: '9', name: 'Fullbody Workout', description: 'Allenamento completo che coinvolge tutti i gruppi muscolari.', intensity: 'media', color: 'bg-green-500' },
   { id: '10', name: 'GAG', description: 'Gambe, Addominali, Glutei.', intensity: 'media', color: 'bg-rose-500' },
   { id: '11', name: 'Total Body Coreografico', description: 'Allenamento aerobico con coreografie.', intensity: 'media', color: 'bg-cyan-500' },
-  { id: '12', name: 'Triceps Legs + Butt', description: 'Focus su tricipiti, gambe e glutei.', intensity: 'media', color: 'bg-fuchsia-500' },
+  { id: '12', name: 'Gym Arms Butt', description: 'Focus su braccia e glutei.', intensity: 'media', color: 'bg-fuchsia-500' },
 ];
 
 const SCHEDULE: ScheduleItem[] = [
   // Lunedì
-  { id: 's1', courseId: '1', day: 'Lunedì', time: '10:00/11:00', instructor: 'Gianluca', capacity: 20 },
-  { id: 's2', courseId: '2', day: 'Lunedì', time: '13:30/14:30', instructor: 'Andrea', capacity: 20 },
-  { id: 's3', courseId: '3', day: 'Lunedì', time: '18:05/19:05', instructor: 'Gianluca', capacity: 20 },
-  { id: 's4', courseId: '4', day: 'Lunedì', time: '19:15/20:15', instructor: 'Gianluca', capacity: 25 },
+  { id: 's1', courseId: '1', day: 'Lunedì', time: '10:00/11:00', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
+  { id: 's2', courseId: '2', day: 'Lunedì', time: '13:30/14:30', instructor: 'Luca', capacity: COURSE_CAPACITY },
+  { id: 's3', courseId: '3', day: 'Lunedì', time: '18:05/19:05', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
+  { id: 's4', courseId: '4', day: 'Lunedì', time: '19:15/20:15', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
   
   // Martedì
-  { id: 's5', courseId: '5', day: 'Martedì', time: '09:30/10:30', instructor: 'Sisto', capacity: 20 },
-  { id: 's5b', courseId: '5', day: 'Martedì', time: '10:30/11:30', instructor: 'Sisto', capacity: 20 },
-  { id: 's6', courseId: '6', day: 'Martedì', time: '13:30/14:30', instructor: 'Luca', capacity: 20 },
-  { id: 's7', courseId: '7', day: 'Martedì', time: '16:15/17:15', instructor: 'Hanna', capacity: 20 },
-  { id: 's7b', courseId: '7', day: 'Martedì', time: '17:15/18:15', instructor: 'Hanna', capacity: 20 },
-  { id: 's2_tue', courseId: '2', day: 'Martedì', time: '18:35/19:35', instructor: 'Andrea', capacity: 20 },
-  { id: 's8', courseId: '8', day: 'Martedì', time: '19:40/20:40', instructor: 'Gianluca', capacity: 20 },
+  { id: 's5', courseId: '5', day: 'Martedì', time: '09:30/10:30', instructor: 'Sisto', capacity: COURSE_CAPACITY },
+  { id: 's5b', courseId: '5', day: 'Martedì', time: '10:30/11:30', instructor: 'Sisto', capacity: COURSE_CAPACITY },
+  { id: 's6', courseId: '6', day: 'Martedì', time: '13:30/14:30', instructor: 'Luca', capacity: COURSE_CAPACITY },
+  { id: 's7', courseId: '7', day: 'Martedì', time: '16:15/17:15', instructor: 'Hanna', capacity: COURSE_CAPACITY },
+  { id: 's7b', courseId: '7', day: 'Martedì', time: '17:15/18:15', instructor: 'Hanna', capacity: COURSE_CAPACITY },
+  { id: 's2_tue', courseId: '2', day: 'Martedì', time: '18:35/19:35', instructor: 'Luca', capacity: COURSE_CAPACITY },
+  { id: 's8', courseId: '8', day: 'Martedì', time: '19:40/20:40', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
 
   // Mercoledì
-  { id: 's10', courseId: '10', day: 'Mercoledì', time: '10:00/11:00', instructor: 'Gianluca', capacity: 20 },
-  { id: 's2_wed', courseId: '2', day: 'Mercoledì', time: '13:30/14:30', instructor: 'Andrea', capacity: 20 },
-  { id: 's9', courseId: '9', day: 'Mercoledì', time: '18:05/19:05', instructor: 'Gianluca', capacity: 20 },
-  { id: 's10_evening', courseId: '10', day: 'Mercoledì', time: '19:15/20:15', instructor: 'Gianluca', capacity: 20 },
+  { id: 's10', courseId: '10', day: 'Mercoledì', time: '10:00/11:00', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
+  { id: 's2_wed', courseId: '2', day: 'Mercoledì', time: '13:30/14:30', instructor: 'Luca', capacity: COURSE_CAPACITY },
+  { id: 's9', courseId: '9', day: 'Mercoledì', time: '18:05/19:05', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
+  { id: 's10_evening', courseId: '10', day: 'Mercoledì', time: '19:15/20:15', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
 
   // Giovedì
-  { id: 's5_thu', courseId: '5', day: 'Giovedì', time: '09:30/10:30', instructor: 'Sisto', capacity: 20 },
-  { id: 's5b_thu', courseId: '5', day: 'Giovedì', time: '10:30/11:30', instructor: 'Sisto', capacity: 20 },
-  { id: 's6_thu', courseId: '6', day: 'Giovedì', time: '13:30/14:30', instructor: 'Luca', capacity: 20 },
-  { id: 's7_thu', courseId: '7', day: 'Giovedì', time: '16:15/17:15', instructor: 'Hanna', capacity: 20 },
-  { id: 's7b_thu', courseId: '7', day: 'Giovedì', time: '17:15/18:15', instructor: 'Hanna', capacity: 20 },
-  { id: 's2_thu', courseId: '2', day: 'Giovedì', time: '18:35/19:35', instructor: 'Andrea', capacity: 20 },
-  { id: 's8_thu', courseId: '8', day: 'Giovedì', time: '19:40/20:40', instructor: 'Gianluca', capacity: 20 },
+  { id: 's5_thu', courseId: '5', day: 'Giovedì', time: '09:30/10:30', instructor: 'Sisto', capacity: COURSE_CAPACITY },
+  { id: 's5b_thu', courseId: '5', day: 'Giovedì', time: '10:30/11:30', instructor: 'Sisto', capacity: COURSE_CAPACITY },
+  { id: 's6_thu', courseId: '6', day: 'Giovedì', time: '13:30/14:30', instructor: 'Luca', capacity: COURSE_CAPACITY },
+  { id: 's7_thu', courseId: '7', day: 'Giovedì', time: '16:15/17:15', instructor: 'Hanna', capacity: COURSE_CAPACITY },
+  { id: 's7b_thu', courseId: '7', day: 'Giovedì', time: '17:15/18:15', instructor: 'Hanna', capacity: COURSE_CAPACITY },
+  { id: 's2_thu', courseId: '2', day: 'Giovedì', time: '18:35/19:35', instructor: 'Luca', capacity: COURSE_CAPACITY },
+  { id: 's8_thu', courseId: '8', day: 'Giovedì', time: '19:40/20:40', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
 
   // Venerdì
-  { id: 's4_fri', courseId: '4', day: 'Venerdì', time: '10:00/11:00', instructor: 'Gianluca', capacity: 20 },
-  { id: 's2_fri', courseId: '2', day: 'Venerdì', time: '13:30/14:30', instructor: 'Andrea', capacity: 20 },
-  { id: 's11_fri', courseId: '11', day: 'Venerdì', time: '18:00/19:00', instructor: 'Gianluca', capacity: 20 },
-  { id: 's12_fri', courseId: '12', day: 'Venerdì', time: '19:00/20:00', instructor: 'Gianluca', capacity: 20 },
+  { id: 's4_fri', courseId: '4', day: 'Venerdì', time: '10:00/11:00', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
+  { id: 's2_fri', courseId: '2', day: 'Venerdì', time: '13:30/14:30', instructor: 'Luca', capacity: COURSE_CAPACITY },
+  { id: 's11_fri', courseId: '11', day: 'Venerdì', time: '18:00/19:00', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
+  { id: 's12_fri', courseId: '12', day: 'Venerdì', time: '19:00/20:00', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
 ];
 
 const MOCK_USER: User = {
@@ -133,10 +139,12 @@ interface AppContextType {
   courses: Course[];
   schedule: ScheduleItem[];
   bookings: Booking[];
+  waitlist: WaitlistEntry[];
   login: (asAdmin?: boolean) => void;
   logout: () => void;
   bookClass: (scheduleId: string, date: string) => void;
   cancelBooking: (bookingId: string) => void;
+  leaveWaitlist: (entryId: string) => void;
   addCourse: (course: Course) => void;
   isAdmin: boolean;
   notifications: AppNotification[];
@@ -154,7 +162,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [courses, setCourses] = useState<Course[]>(COURSES);
   const [schedule, setSchedule] = useState<ScheduleItem[]>(SCHEDULE);
-  const [bookings, setBookings] = useState<Booking[]>([]);
+  // Bookings and waitlist change together (a cancellation can promote someone), so they share
+  // one state object. The ref always holds the latest value, so two actions fired in the same
+  // tick never work on a stale copy.
+  const [bookingState, setBookingStateRaw] = useState<BookingState>({ bookings: [], waitlist: [] });
+  const bookingStateRef = useRef(bookingState);
+  const setBookingState = (next: BookingState) => {
+    bookingStateRef.current = next;
+    setBookingStateRaw(next);
+  };
+  const { bookings, waitlist } = bookingState;
   const [allNotifications, setAllNotifications] = useState<AppNotification[]>([]);
   const { toast } = useToast();
 
@@ -221,62 +238,112 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const bookClass = (scheduleId: string, date: string) => {
-    if (!user) return;
-    
-    // Check if already booked for this specific date (limit to 1 per day)
-    const alreadyBookedToday = bookings.find(b => b.userId === user.id && b.date === date);
-    if (alreadyBookedToday) {
-      toast({
-        title: "Limite raggiunto",
-        description: "Puoi prenotare un solo corso al giorno.",
-        variant: "destructive",
-      });
-      return;
-    }
+  const newId = () => Math.random().toString(36).slice(2, 11);
 
-    const newBooking: Booking = {
-      id: Math.random().toString(36).substr(2, 9),
-      userId: user.id,
-      scheduleId,
-      date,
-    };
-
-    setBookings([...bookings, newBooking]);
+  const describeSlot = (scheduleId: string, date: string) => {
     const slot = schedule.find(s => s.id === scheduleId);
     const course = slot && courses.find(c => c.id === slot.courseId);
-    pushNotification(user.id, {
-      type: 'booking_confirmed',
-      title: 'Prenotazione confermata',
-      message: course && slot
-        ? `${course.name} — ${new Date(`${date}T00:00:00`).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}, ${slot.time}`
-        : 'La tua prenotazione è stata registrata.',
-      link: '/profile',
-    });
-    toast({
-      title: "Prenotazione confermata!",
-      description: "Ti aspettiamo in palestra.",
-      className: "bg-primary text-primary-foreground border-none",
-    });
+    const day = new Date(`${date}T00:00:00`).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+    return {
+      capacity: slot?.capacity ?? COURSE_CAPACITY,
+      name: course?.name ?? 'Corso',
+      label: course && slot ? `${course.name} — ${day}, ${slot.time}` : day,
+    };
+  };
+
+  const bookClass = (scheduleId: string, date: string) => {
+    if (!user) return;
+    const info = describeSlot(scheduleId, date);
+    const { state, outcome } = requestBooking(
+      bookingStateRef.current,
+      { userId: user.id, scheduleId, date, capacity: info.capacity },
+      newId,
+    );
+
+    switch (outcome.kind) {
+      case 'booked':
+        setBookingState(state);
+        pushNotification(user.id, {
+          type: 'booking_confirmed',
+          title: 'Prenotazione confermata',
+          message: info.label,
+          link: '/profile',
+        });
+        toast({
+          title: "Prenotazione confermata!",
+          description: "Ti aspettiamo in palestra.",
+          className: "bg-primary text-primary-foreground border-none",
+        });
+        return;
+      case 'waitlisted':
+        setBookingState(state);
+        pushNotification(user.id, {
+          type: 'waitlist_joined',
+          title: "Sei in lista d'attesa",
+          message: `${info.label}. Posizione n° ${outcome.position}: se si libera un posto verrai iscritto automaticamente.`,
+          link: '/profile',
+        });
+        toast({
+          title: "Corso pieno: sei in lista d'attesa",
+          description: `Posizione n° ${outcome.position}. Ti avviseremo se entri.`,
+        });
+        return;
+      case 'already_booked':
+        toast({ title: "Sei già iscritto", description: "Hai già un posto in questo corso." });
+        return;
+      case 'already_waitlisted':
+        toast({ title: "Sei già in lista d'attesa", description: `Posizione n° ${outcome.position}.` });
+        return;
+      case 'daily_limit':
+        toast({
+          title: "Limite raggiunto",
+          description: "Puoi prenotare un solo corso al giorno (lista d'attesa inclusa).",
+          variant: "destructive",
+        });
+        return;
+    }
   };
 
   const cancelBooking = (bookingId: string) => {
-    const booking = bookings.find(b => b.id === bookingId);
-    setBookings(bookings.filter(b => b.id !== bookingId));
-    if (booking) {
-      const slot = schedule.find(s => s.id === booking.scheduleId);
-      const course = slot && courses.find(c => c.id === slot.courseId);
-      pushNotification(booking.userId, {
-        type: 'booking_cancelled',
-        title: 'Prenotazione cancellata',
-        message: course ? `Hai annullato ${course.name} (${slot!.time}).` : 'La prenotazione è stata rimossa.',
-        link: '/calendar',
+    const target = bookingStateRef.current.bookings.find(b => b.id === bookingId);
+    if (!target) return;
+    const { state, outcome } = cancelBookingRule(
+      bookingStateRef.current,
+      { bookingId, capacity: describeSlot(target.scheduleId, target.date).capacity },
+      newId,
+    );
+    const { cancelled, promoted } = outcome;
+    if (!cancelled) return;
+    setBookingState(state);
+
+    const info = describeSlot(cancelled.scheduleId, cancelled.date);
+    pushNotification(cancelled.userId, {
+      type: 'booking_cancelled',
+      title: 'Prenotazione cancellata',
+      message: `Hai annullato ${info.label}.`,
+      link: '/calendar',
+    });
+    if (promoted) {
+      pushNotification(promoted.userId, {
+        type: 'waitlist_promoted',
+        title: 'Si è liberato un posto: sei iscritto!',
+        message: `Sei stato inserito automaticamente in ${info.label}.`,
+        link: '/profile',
       });
     }
     toast({
       title: "Prenotazione cancellata",
-      description: "La tua prenotazione è stata rimossa.",
+      description: promoted
+        ? "Il posto è stato assegnato al primo in lista d'attesa."
+        : "La tua prenotazione è stata rimossa.",
     });
+  };
+
+  const leaveWaitlist = (entryId: string) => {
+    const { state, left } = leaveWaitlistRule(bookingStateRef.current, entryId);
+    if (!left) return;
+    setBookingState(state);
+    toast({ title: "Uscito dalla lista d'attesa", description: describeSlot(left.scheduleId, left.date).label });
   };
 
   const addCourse = (course: Course) => {
@@ -289,10 +356,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       courses,
       schedule,
       bookings,
+      waitlist,
       login,
       logout,
       bookClass,
       cancelBooking,
+      leaveWaitlist,
       addCourse,
       isAdmin: user?.role === 'admin',
       notifications,
