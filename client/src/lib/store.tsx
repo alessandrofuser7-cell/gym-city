@@ -9,6 +9,7 @@ import {
   type BookingState,
   type WaitlistEntry,
 } from '@/lib/booking-logic';
+import { GIANLUCA_COURSES_START, checkBookable, parseISODate } from '@/lib/schedule-rules';
 
 export type { Booking, WaitlistEntry } from '@/lib/booking-logic';
 
@@ -36,6 +37,7 @@ export type ScheduleItem = {
   time: string; // '18:00'
   instructor: string;
   capacity: number;
+  startsOn?: string; // 'yyyy-MM-dd': first class date if later than the season start
 };
 
 export type NotificationType =
@@ -79,7 +81,7 @@ const COURSES: Course[] = [
   { id: '12', name: 'Gym Arms Butt', description: 'Focus su braccia e glutei.', intensity: 'media', color: 'bg-fuchsia-500' },
 ];
 
-const SCHEDULE: ScheduleItem[] = [
+const BASE_SCHEDULE: ScheduleItem[] = [
   // Lunedì
   { id: 's1', courseId: '1', day: 'Lunedì', time: '10:00/11:00', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
   { id: 's2', courseId: '2', day: 'Lunedì', time: '13:30/14:30', instructor: 'Luca', capacity: COURSE_CAPACITY },
@@ -116,6 +118,11 @@ const SCHEDULE: ScheduleItem[] = [
   { id: 's11_fri', courseId: '11', day: 'Venerdì', time: '18:00/19:00', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
   { id: 's12_fri', courseId: '12', day: 'Venerdì', time: '19:00/20:00', instructor: 'Gianluca', capacity: COURSE_CAPACITY },
 ];
+
+// Stagione 2026/2027: "Corsi di Gianluca — inizio 05 ottobre"
+const SCHEDULE: ScheduleItem[] = BASE_SCHEDULE.map(s =>
+  s.instructor === 'Gianluca' ? { ...s, startsOn: GIANLUCA_COURSES_START } : s
+);
 
 const MOCK_USER: User = {
   id: 'u1',
@@ -253,6 +260,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const bookClass = (scheduleId: string, date: string) => {
     if (!user) return;
+    const slot = schedule.find(s => s.id === scheduleId);
+    if (!slot) return;
+    // The UI already hides these, but the rule must hold for any caller
+    const bookable = checkBookable(slot, parseISODate(date), new Date());
+    if (!bookable.ok) {
+      toast({
+        title: "Prenotazione non disponibile",
+        description: bookable.reason === 'not_open_yet'
+          ? "Le prenotazioni aprono alle 09:00 del giorno precedente (lunedì: dal venerdì)."
+          : bookable.reason === 'started'
+            ? "La lezione è già iniziata."
+            : "Il corso non è attivo in questa data.",
+        variant: "destructive",
+      });
+      return;
+    }
     const info = describeSlot(scheduleId, date);
     const { state, outcome } = requestBooking(
       bookingStateRef.current,

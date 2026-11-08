@@ -6,6 +6,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CalendarDays, Trash2, Trophy, Flame, History, Hourglass } from 'lucide-react';
 import { waitlistPosition } from '@/lib/booking-logic';
+import { parseISODate } from '@/lib/schedule-rules';
+import { format } from 'date-fns';
+import { it } from 'date-fns/locale';
+
+const fmtDate = (iso: string) => format(parseISODate(iso), 'EEE d MMM', { locale: it });
 import { useLocation } from 'wouter';
 import patternImage from '@assets/generated_images/sporty_abstract_geometric_pattern_dark_neon_green.png';
 
@@ -98,7 +103,7 @@ export default function ProfilePage() {
                       </p>
                       <h3 className="text-xl font-display font-bold uppercase italic text-white mb-1">{entry.course?.name}</h3>
                       <p className="text-muted-foreground flex items-center gap-2">
-                        <span className="text-primary font-bold">{entry.slot?.day}</span> • {entry.slot?.time} • con {entry.slot?.instructor}
+                        <span className="text-primary font-bold capitalize">{fmtDate(entry.date)}</span> • {entry.slot?.time} • con {entry.slot?.instructor}
                       </p>
                     </div>
                   </div>
@@ -123,7 +128,7 @@ export default function ProfilePage() {
                       <div>
                         <h3 className="text-xl font-display font-bold uppercase italic text-white mb-1">{booking.course?.name}</h3>
                         <p className="text-muted-foreground flex items-center gap-2">
-                          <span className="text-primary font-bold">{booking.slot?.day}</span> • {booking.slot?.time} • con {booking.slot?.instructor}
+                          <span className="text-primary font-bold capitalize">{fmtDate(booking.date)}</span> • {booking.slot?.time} • con {booking.slot?.instructor}
                         </p>
                       </div>
                     </div>

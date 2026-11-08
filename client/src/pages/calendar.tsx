@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '@/lib/store';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -13,61 +13,63 @@ import {
   DialogFooter
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { format, addDays, startOfWeek, isSameDay, parseISO, isAfter, startOfDay } from 'date-fns';
+import { format, startOfDay } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { Clock, User as UserIcon, CheckCircle2, AlertCircle, Hourglass } from 'lucide-react';
-import { bookedCount, slotWaitlist, waitlistPosition } from '@/lib/booking-logic';
+import { COURSE_CAPACITY, bookedCount, slotWaitlist, waitlistPosition } from '@/lib/booking-logic';
+import { checkBookable, nextOccurrence, parseISODate, toISODate, WEEKDAYS, type Bookability } from '@/lib/schedule-rules';
 import { cn } from '@/lib/utils';
 import { useLocation } from 'wouter';
 
-const DAYS_MAP: Record<string, number> = {
-  'Lunedì': 1,
-  'Martedì': 2,
-  'Mercoledì': 3,
-  'Giovedì': 4,
-  'Venerdì': 5
-};
-
-const DAYS = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì'];
+const DAYS: string[] = [...WEEKDAYS];
 
 export default function CalendarPage() {
   const { schedule, courses, bookClass, leaveWaitlist, user, bookings, waitlist } = useApp();
   const [openBookingId, setOpenBookingId] = useState<string | null>(null);
   const [, setLocation] = useLocation();
 
-  // Current Date logic
-  const today = startOfDay(new Date());
-  const tomorrow = addDays(today, 1);
-  const weekStart = startOfWeek(today, { weekStartsOn: 1 });
-  
-  // Current day of week in Italian
+  // Re-evaluate the booking windows every minute (they open at 09:00, close at class start)
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 60000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const today = startOfDay(now);
   const currentDayName = format(today, 'EEEE', { locale: it });
   const capitalizedDayName = currentDayName.charAt(0).toUpperCase() + currentDayName.slice(1);
-  
-  // Logic for allowed booking day
-  // If Today is Friday, Saturday or Sunday -> Can book for Monday
-  // Else -> Can book for Tomorrow
-  let targetBookingDate = tomorrow;
-  const isFriday = capitalizedDayName === 'Venerdì';
-  const isSaturday = capitalizedDayName === 'Sabato';
-  const isSunday = capitalizedDayName === 'Domenica';
 
-  if (isFriday || isSaturday || isSunday) {
-    // Target is next Monday
-    const daysToAdd = isFriday ? 3 : (isSaturday ? 2 : 1);
-    targetBookingDate = addDays(today, daysToAdd);
-  }
+  // Each tab shows the next class on that weekday (today included)
+  const dayDates = Object.fromEntries(DAYS.map(d => [d, nextOccurrence(d, now)])) as Record<string, Date>;
 
-  const targetDayName = format(targetBookingDate, 'EEEE', { locale: it });
-  const capitalizedTargetName = targetDayName.charAt(0).toUpperCase() + targetDayName.slice(1);
-
-  const [selectedDay, setSelectedDay] = useState(capitalizedTargetName);
+  // Open the tab of the first day that has something bookable right now
+  const firstOpenDay = DAYS
+    .slice()
+    .sort((a, b) => dayDates[a].getTime() - dayDates[b].getTime())
+    .find(d => schedule.some(s => s.day === d && checkBookable(s, dayDates[d], now).ok));
+  const [selectedDay, setSelectedDay] = useState(firstOpenDay ?? DAYS[0]);
 
   const filteredSchedule = schedule
     .filter(s => s.day === selectedDay)
     .sort((a, b) => a.time.localeCompare(b.time));
 
-  const bookingDate = format(targetBookingDate, 'yyyy-MM-dd');
+  const selectedDate = dayDates[selectedDay];
+  const bookingDate = toISODate(selectedDate);
+  const selectedDateLabel = format(selectedDate, 'EEEE d MMMM', { locale: it });
+
+  const closedReason = (b: Bookability): string => {
+    if (b.ok) return '';
+    switch (b.reason) {
+      case 'not_open_yet':
+        return `Prenotazioni aperte da ${format(b.opensAt, "EEEE d MMMM 'alle' HH:mm", { locale: it })}`;
+      case 'started':
+        return 'Lezione già iniziata';
+      case 'course_not_started':
+        return `Il corso inizia il ${format(parseISODate(b.startsOn), 'd MMMM', { locale: it })}`;
+      case 'out_of_season':
+        return 'Fuori stagione (corsi dal 21 settembre al 26 giugno)';
+    }
+  };
 
   const handleBook = (scheduleId: string) => {
     if (!user) {
@@ -80,11 +82,6 @@ export default function CalendarPage() {
 
   const getCourseDetails = (courseId: string) => courses.find(c => c.id === courseId);
 
-  // Check if a day is the one currently allowed for booking
-  const isBookingAllowedForDay = (dayName: string) => {
-    return dayName === capitalizedTargetName;
-  };
-
   return (
     <div className="container mx-auto px-4 py-10 min-h-screen">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-end mb-10 gap-4">
@@ -93,7 +90,7 @@ export default function CalendarPage() {
             Calendario <span className="text-primary">Settimanale</span>
           </h1>
           <p className="text-muted-foreground text-lg">
-            Settimana del {format(weekStart, 'd MMMM', { locale: it })} - {format(addDays(weekStart, 4), 'd MMMM yyyy', { locale: it })}
+            Stagione 2026/2027 · 21 settembre – 26 giugno
           </p>
         </div>
         <div className="flex flex-col items-end gap-2">
@@ -102,10 +99,10 @@ export default function CalendarPage() {
           </Badge>
           <div className="text-right">
             <p className="text-xs text-muted-foreground italic">
-              * Prenotazioni: max 1 corso al giorno.
+              * Prenotazioni: max 1 corso al giorno, {COURSE_CAPACITY} posti per lezione.
             </p>
             <p className="text-xs text-primary font-bold italic">
-              * Prenotazioni aperte per: {capitalizedTargetName} {format(targetBookingDate, 'd MMMM', { locale: it })}
+              * Aperte dalle 09:00 del giorno prima (corsi del lunedì: dal venerdì).
             </p>
           </div>
         </div>
@@ -119,8 +116,13 @@ export default function CalendarPage() {
               value={day}
               className="flex-1 min-w-[100px] py-3 text-lg font-display uppercase italic data-[state=active]:bg-primary data-[state=active]:text-black transition-all relative"
             >
-              {day}
-              {day === capitalizedTargetName && (
+              <span className="flex flex-col items-center leading-tight">
+                {day}
+                <span className="text-[11px] not-italic normal-case font-sans opacity-70">
+                  {format(dayDates[day], 'd MMM', { locale: it })}
+                </span>
+              </span>
+              {day === firstOpenDay && (
                 <span className="absolute -top-1 -right-1 flex h-3 w-3">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
@@ -146,7 +148,8 @@ export default function CalendarPage() {
             const remainingSpots = Math.max(0, slot.capacity - bookedCount(state, slot.id, bookingDate));
             // A spot freed while people are waiting goes to them, never to a newcomer
             const isFull = remainingSpots <= 0 || queueLength > 0;
-            const canBookNow = isBookingAllowedForDay(selectedDay);
+            const bookability = checkBookable(slot, selectedDate, now);
+            const canBookNow = bookability.ok;
             
             if (!course) return null;
 
@@ -199,8 +202,8 @@ export default function CalendarPage() {
 
                   {!canBookNow ? (
                     <div className="flex items-center gap-2 text-xs text-amber-500/80 bg-amber-500/5 p-2 rounded border border-amber-500/10">
-                      <AlertCircle className="h-3 w-3" />
-                      Prenotazioni aperte solo il giorno precedente
+                      <AlertCircle className="h-3 w-3 shrink-0" />
+                      {closedReason(bookability)}
                     </div>
                   ) : myWaitEntry ? (
                     <div className="space-y-2">
@@ -235,7 +238,7 @@ export default function CalendarPage() {
                           ) : isFull ? (
                             <span className="flex items-center gap-2"><Hourglass className="h-4 w-4" /> Entra in lista d'attesa</span>
                           ) : (
-                            "Prenota per Domani"
+                            "Prenota"
                           )}
                         </Button>
                       </DialogTrigger>
@@ -248,7 +251,7 @@ export default function CalendarPage() {
                             {isFull
                               ? "Il corso è pieno. Se qualcuno disdice, il posto va al primo in lista e vieni iscritto automaticamente. "
                               : null}
-                            {isFull ? "Lezione di" : "Stai prenotando per"} <span className="text-primary font-bold">{capitalizedTargetName}, {format(targetBookingDate, 'd MMMM', { locale: it })}</span>.
+                            {isFull ? "Lezione di" : "Stai prenotando per"} <span className="text-primary font-bold capitalize">{selectedDateLabel}</span>.
                           </DialogDescription>
                         </DialogHeader>
                         
