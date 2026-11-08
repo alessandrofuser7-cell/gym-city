@@ -34,6 +34,29 @@ export type Booking = {
   date: string; // ISO date string for the specific instance
 };
 
+export type NotificationType =
+  | 'subscription_expired'
+  | 'subscription_expiring'
+  | 'welcome'
+  | 'booking_confirmed'
+  | 'booking_cancelled'
+  | 'booking_reminder'
+  | 'admin_message'
+  | 'info';
+
+export type AppNotification = {
+  id: string;
+  userId: string;
+  title: string;
+  message: string;
+  type: NotificationType;
+  read: boolean;
+  link?: string;
+  createdAt: string;
+};
+
+export type NewNotification = Pick<AppNotification, 'title' | 'message' | 'type' | 'link'>;
+
 // Mock Data
 const COURSES: Course[] = [
   { id: '1', name: 'Body Sculpt', description: 'Tonificazione completa per tutto il corpo.', intensity: 'media', color: 'bg-pink-500' },
@@ -116,6 +139,13 @@ interface AppContextType {
   cancelBooking: (bookingId: string) => void;
   addCourse: (course: Course) => void;
   isAdmin: boolean;
+  notifications: AppNotification[];
+  unreadCount: number;
+  pushNotification: (userId: string, notification: NewNotification) => void;
+  markNotificationRead: (id: string) => void;
+  markAllNotificationsRead: () => void;
+  deleteNotification: (id: string) => void;
+  clearReadNotifications: () => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -125,10 +155,58 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [courses, setCourses] = useState<Course[]>(COURSES);
   const [schedule, setSchedule] = useState<ScheduleItem[]>(SCHEDULE);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [allNotifications, setAllNotifications] = useState<AppNotification[]>([]);
   const { toast } = useToast();
 
+  // Notifications of the current user, newest first
+  const notifications = user
+    ? allNotifications
+        .filter(n => n.userId === user.id)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    : [];
+  const unreadCount = notifications.filter(n => !n.read).length;
+
+  const pushNotification = (userId: string, notification: NewNotification) => {
+    setAllNotifications(prev => [
+      ...prev,
+      {
+        ...notification,
+        id: Math.random().toString(36).slice(2, 11),
+        userId,
+        read: false,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  };
+
+  const isMine = (n: AppNotification) => !!user && n.userId === user.id;
+
+  const markNotificationRead = (id: string) => {
+    setAllNotifications(prev => prev.map(n => (n.id === id && isMine(n) ? { ...n, read: true } : n)));
+  };
+
+  const markAllNotificationsRead = () => {
+    setAllNotifications(prev => prev.map(n => (isMine(n) ? { ...n, read: true } : n)));
+  };
+
+  const deleteNotification = (id: string) => {
+    setAllNotifications(prev => prev.filter(n => !(n.id === id && isMine(n))));
+  };
+
+  const clearReadNotifications = () => {
+    setAllNotifications(prev => prev.filter(n => !(isMine(n) && n.read)));
+  };
+
   const login = (asAdmin = false) => {
-    setUser(asAdmin ? MOCK_ADMIN : MOCK_USER);
+    const loggedUser = asAdmin ? MOCK_ADMIN : MOCK_USER;
+    setUser(loggedUser);
+    if (!allNotifications.some(n => n.userId === loggedUser.id && n.type === 'welcome')) {
+      pushNotification(loggedUser.id, {
+        type: 'welcome',
+        title: `Benvenuto, ${loggedUser.name.split(' ')[0]}!`,
+        message: 'Qui troverai conferme di prenotazione, scadenze e novità della palestra.',
+      });
+    }
     toast({
       title: "Benvenuto!",
       description: asAdmin ? "Accesso effettuato come Amministratore" : "Accesso effettuato con successo",
@@ -165,6 +243,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
 
     setBookings([...bookings, newBooking]);
+    const slot = schedule.find(s => s.id === scheduleId);
+    const course = slot && courses.find(c => c.id === slot.courseId);
+    pushNotification(user.id, {
+      type: 'booking_confirmed',
+      title: 'Prenotazione confermata',
+      message: course && slot
+        ? `${course.name} — ${new Date(`${date}T00:00:00`).toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' })}, ${slot.time}`
+        : 'La tua prenotazione è stata registrata.',
+      link: '/profile',
+    });
     toast({
       title: "Prenotazione confermata!",
       description: "Ti aspettiamo in palestra.",
@@ -173,7 +261,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   const cancelBooking = (bookingId: string) => {
+    const booking = bookings.find(b => b.id === bookingId);
     setBookings(bookings.filter(b => b.id !== bookingId));
+    if (booking) {
+      const slot = schedule.find(s => s.id === booking.scheduleId);
+      const course = slot && courses.find(c => c.id === slot.courseId);
+      pushNotification(booking.userId, {
+        type: 'booking_cancelled',
+        title: 'Prenotazione cancellata',
+        message: course ? `Hai annullato ${course.name} (${slot!.time}).` : 'La prenotazione è stata rimossa.',
+        link: '/calendar',
+      });
+    }
     toast({
       title: "Prenotazione cancellata",
       description: "La tua prenotazione è stata rimossa.",
@@ -195,7 +294,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       bookClass,
       cancelBooking,
       addCourse,
-      isAdmin: user?.role === 'admin'
+      isAdmin: user?.role === 'admin',
+      notifications,
+      unreadCount,
+      pushNotification,
+      markNotificationRead,
+      markAllNotificationsRead,
+      deleteNotification,
+      clearReadNotifications,
     }}>
       {children}
     </AppContext.Provider>

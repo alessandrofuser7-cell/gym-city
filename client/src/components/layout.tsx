@@ -16,6 +16,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { NotificationBell } from "@/components/notification-bell";
 
 import logoImg from '@assets/palestra-gym-city-pescara_1769876975532.jpg';
 
@@ -103,6 +104,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center gap-4">
             {user ? (
               <div className="flex items-center gap-3">
+                <NotificationBell />
                 <div className="hidden md:flex flex-col items-end">
                   <span className="text-sm font-bold leading-none">{user.name}</span>
                   <span className="text-xs text-muted-foreground uppercase">{user.role}</span>
