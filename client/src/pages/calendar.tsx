@@ -16,15 +16,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { format, startOfDay } from 'date-fns';
 import { it } from 'date-fns/locale';
 import { Clock, User as UserIcon, CheckCircle2, AlertCircle, Hourglass } from 'lucide-react';
-import { COURSE_CAPACITY, bookedCount, slotWaitlist, waitlistPosition } from '@/lib/booking-logic';
-import { checkBookable, nextOccurrence, parseISODate, toISODate, WEEKDAYS, type Bookability } from '@/lib/schedule-rules';
+import { COURSE_CAPACITY, MIN_PARTICIPANTS, bookedCount, lessonKey, lessonStatus, minimumCheckTime, slotWaitlist, waitlistPosition } from '@/lib/booking-logic';
+import { checkBookable, classStart, nextOccurrence, parseISODate, toISODate, WEEKDAYS, type Bookability } from '@/lib/schedule-rules';
 import { cn } from '@/lib/utils';
 import { useLocation } from 'wouter';
 
 const DAYS: string[] = [...WEEKDAYS];
 
 export default function CalendarPage() {
-  const { schedule, courses, bookClass, leaveWaitlist, user, bookings, waitlist } = useApp();
+  const { schedule, courses, bookClass, leaveWaitlist, user, bookings, waitlist, bookingState } = useApp();
   const [openBookingId, setOpenBookingId] = useState<string | null>(null);
   const [, setLocation] = useLocation();
 
@@ -136,7 +136,7 @@ export default function CalendarPage() {
           {filteredSchedule.map((slot) => {
             const course = getCourseDetails(slot.courseId);
             // Only the bookable date matters here: counts and status are per class instance
-            const state = { bookings, waitlist };
+            const state = bookingState;
             const isBooked = !!user && bookings.some(
               b => b.userId === user.id && b.scheduleId === slot.id && b.date === bookingDate
             );
@@ -148,8 +148,15 @@ export default function CalendarPage() {
             const remainingSpots = Math.max(0, slot.capacity - bookedCount(state, slot.id, bookingDate));
             // A spot freed while people are waiting goes to them, never to a newcomer
             const isFull = remainingSpots <= 0 || queueLength > 0;
+            const lessonStart = classStart(selectedDate, slot.time);
+            const status = lessonStatus(state, slot.id, bookingDate, lessonStart, now);
             const bookability = checkBookable(slot, selectedDate, now);
-            const canBookNow = bookability.ok;
+            // Show "annullata" for lessons the check cancelled, or still upcoming ones that can no
+            // longer reach the minimum; out-of-season or finished lessons keep their own message.
+            const isCancelled = status === 'cancelled' &&
+              (bookability.ok || state.lessonOutcomes?.[lessonKey(slot.id, bookingDate)] === 'cancelled');
+            const booked = bookedCount(state, slot.id, bookingDate);
+            const canBookNow = bookability.ok && !isCancelled;
             
             if (!course) return null;
 
@@ -167,7 +174,9 @@ export default function CalendarPage() {
                       <Clock className="h-4 w-4 text-primary" />
                       <span>{slot.time}</span>
                     </div>
-                    {isBooked ? (
+                    {isCancelled ? (
+                      <Badge variant="destructive" className="font-bold uppercase">Annullata</Badge>
+                    ) : isBooked ? (
                       <Badge className="bg-green-500 text-black font-bold uppercase">Prenotato</Badge>
                     ) : myWaitPos !== null ? (
                       <Badge className="bg-sky-500/15 text-sky-300 border border-sky-500/30 font-bold uppercase">
@@ -200,7 +209,18 @@ export default function CalendarPage() {
                     </Badge>
                   </div>
 
-                  {!canBookNow ? (
+                  {canBookNow && status === 'pending' && booked < MIN_PARTICIPANTS && (
+                    <p className="-mt-3 mb-3 text-[11px] text-muted-foreground">
+                      Minimo {MIN_PARTICIPANTS} iscritti, ora {booked}/{MIN_PARTICIPANTS}: altrimenti la lezione si annulla
+                      alle {format(minimumCheckTime(lessonStart), 'HH:mm')} e gli iscritti vengono avvisati.
+                    </p>
+                  )}
+                  {isCancelled ? (
+                    <div className="flex items-center gap-2 text-xs text-red-400/90 bg-red-500/5 p-2 rounded border border-red-500/15">
+                      <AlertCircle className="h-3 w-3 shrink-0" />
+                      Lezione annullata: meno di {MIN_PARTICIPANTS} iscritti
+                    </div>
+                  ) : !canBookNow ? (
                     <div className="flex items-center gap-2 text-xs text-amber-500/80 bg-amber-500/5 p-2 rounded border border-amber-500/10">
                       <AlertCircle className="h-3 w-3 shrink-0" />
                       {closedReason(bookability)}

@@ -16,6 +16,7 @@ const TYPE_ICONS: Record<NotificationType, React.ComponentType<{ className?: str
   booking_reminder: Clock,
   waitlist_joined: Hourglass,
   waitlist_promoted: PartyPopper,
+  lesson_cancelled: CalendarX,
   admin_message: Bell,
   info: Info,
 };
@@ -29,6 +30,7 @@ const TYPE_COLORS: Record<NotificationType, string> = {
   booking_reminder: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
   waitlist_joined: 'text-sky-400 bg-sky-500/10 border-sky-500/20',
   waitlist_promoted: 'text-green-400 bg-green-500/10 border-green-500/20',
+  lesson_cancelled: 'text-red-400 bg-red-500/10 border-red-500/20',
   admin_message: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
   info: 'text-muted-foreground bg-white/5 border-white/10',
 };

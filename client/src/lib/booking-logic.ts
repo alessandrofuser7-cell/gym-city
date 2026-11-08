@@ -3,6 +3,10 @@
 // once bookings are persisted there.
 
 export const COURSE_CAPACITY = 18;
+/** A lesson with fewer booked participants than this at check time is cancelled. */
+export const MIN_PARTICIPANTS = 5;
+/** When the minimum is checked, in minutes before the lesson starts. Not on the timetable: gym policy to confirm. */
+export const MIN_CHECK_MINUTES_BEFORE = 60;
 
 export type Booking = {
   id: string;
@@ -19,10 +23,16 @@ export type WaitlistEntry = {
   createdAt: string; // ISO timestamp, defines queue order
 };
 
+export type LessonOutcome = 'confirmed' | 'cancelled';
+
 export type BookingState = {
   bookings: Booking[];
   waitlist: WaitlistEntry[];
+  /** Decisions taken at check time, keyed by lessonKey(). Undecided lessons are absent. */
+  lessonOutcomes?: Record<string, LessonOutcome>;
 };
+
+export const lessonKey = (scheduleId: string, date: string) => `${scheduleId}|${date}`;
 
 export type RequestOutcome =
   | { kind: 'booked'; booking: Booking }
@@ -131,6 +141,7 @@ function promoteFromWaitlist(
     if (!first) break;
     const booking: Booking = { id: newId(), userId: first.userId, scheduleId, date };
     current = {
+      ...current,
       bookings: [...current.bookings, booking],
       waitlist: current.waitlist.filter(w => w.id !== first.id),
     };
@@ -162,4 +173,74 @@ export function leaveWaitlist(state: BookingState, entryId: string): { state: Bo
   const left = state.waitlist.find(w => w.id === entryId) ?? null;
   if (!left) return { state, left: null };
   return { state: { ...state, waitlist: state.waitlist.filter(w => w.id !== entryId) }, left };
+}
+
+export function minimumCheckTime(lessonStart: Date): Date {
+  return new Date(lessonStart.getTime() - MIN_CHECK_MINUTES_BEFORE * 60000);
+}
+
+export type LessonStatus = 'pending' | 'confirmed' | 'cancelled';
+
+/**
+ * Before check time a lesson is pending. After it, a lesson is confirmed only if the check
+ * found enough participants; a lesson nobody booked is cancelled without needing a check.
+ */
+export function lessonStatus(
+  state: BookingState,
+  scheduleId: string,
+  date: string,
+  lessonStart: Date,
+  now: Date,
+): LessonStatus {
+  const decided = state.lessonOutcomes?.[lessonKey(scheduleId, date)];
+  if (decided) return decided;
+  if (now < minimumCheckTime(lessonStart)) return 'pending';
+  return bookedCount(state, scheduleId, date) >= MIN_PARTICIPANTS ? 'confirmed' : 'cancelled';
+}
+
+export type CancelledLesson = { scheduleId: string; date: string; userIds: string[] };
+
+/**
+ * Decide every lesson whose check time has passed and that has not been decided yet.
+ * Cancelled lessons lose their bookings and waitlist; the affected users are returned so the
+ * caller can notify them. Once confirmed, a lesson stays confirmed even if people cancel later.
+ */
+export function enforceMinimumParticipants(
+  state: BookingState,
+  lessonStartOf: (scheduleId: string, date: string) => Date | null,
+  now: Date,
+): { state: BookingState; cancelled: CancelledLesson[]; confirmed: string[] } {
+  const outcomes = { ...(state.lessonOutcomes ?? {}) };
+  const lessons = new Map<string, { scheduleId: string; date: string }>();
+  for (const x of [...state.bookings, ...state.waitlist]) {
+    lessons.set(lessonKey(x.scheduleId, x.date), { scheduleId: x.scheduleId, date: x.date });
+  }
+
+  let { bookings, waitlist } = state;
+  const cancelled: CancelledLesson[] = [];
+  const confirmed: string[] = [];
+  lessons.forEach(({ scheduleId, date }, key) => {
+    if (outcomes[key]) return;
+    const start = lessonStartOf(scheduleId, date);
+    if (!start || now < minimumCheckTime(start)) return;
+
+    const booked = bookings.filter(b => b.scheduleId === scheduleId && b.date === date);
+    if (booked.length >= MIN_PARTICIPANTS) {
+      outcomes[key] = 'confirmed';
+      confirmed.push(key);
+      return;
+    }
+    outcomes[key] = 'cancelled';
+    const waiting = waitlist.filter(w => w.scheduleId === scheduleId && w.date === date);
+    cancelled.push({
+      scheduleId,
+      date,
+      userIds: Array.from(new Set([...booked, ...waiting].map(x => x.userId))),
+    });
+    bookings = bookings.filter(b => !(b.scheduleId === scheduleId && b.date === date));
+    waitlist = waitlist.filter(w => !(w.scheduleId === scheduleId && w.date === date));
+  });
+
+  if (cancelled.length === 0 && confirmed.length === 0) return { state, cancelled, confirmed };
+  return { state: { ...state, bookings, waitlist, lessonOutcomes: outcomes }, cancelled, confirmed };
 }

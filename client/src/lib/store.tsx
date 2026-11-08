@@ -1,15 +1,18 @@
-import React, { createContext, useContext, useState, useRef } from 'react';
+import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import {
   COURSE_CAPACITY,
   requestBooking,
   cancelBooking as cancelBookingRule,
   leaveWaitlist as leaveWaitlistRule,
+  enforceMinimumParticipants,
+  lessonStatus,
+  MIN_PARTICIPANTS,
   type Booking,
   type BookingState,
   type WaitlistEntry,
 } from '@/lib/booking-logic';
-import { GIANLUCA_COURSES_START, checkBookable, parseISODate } from '@/lib/schedule-rules';
+import { GIANLUCA_COURSES_START, checkBookable, classStart, parseISODate } from '@/lib/schedule-rules';
 
 export type { Booking, WaitlistEntry } from '@/lib/booking-logic';
 
@@ -49,6 +52,7 @@ export type NotificationType =
   | 'booking_reminder'
   | 'waitlist_joined'
   | 'waitlist_promoted'
+  | 'lesson_cancelled'
   | 'admin_message'
   | 'info';
 
@@ -147,6 +151,8 @@ interface AppContextType {
   schedule: ScheduleItem[];
   bookings: Booking[];
   waitlist: WaitlistEntry[];
+  bookingState: BookingState;
+  lessonStartOf: (scheduleId: string, date: string) => Date | null;
   login: (asAdmin?: boolean) => void;
   logout: () => void;
   bookClass: (scheduleId: string, date: string) => void;
@@ -179,6 +185,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setBookingStateRaw(next);
   };
   const { bookings, waitlist } = bookingState;
+
+  const lessonStartOf = (scheduleId: string, date: string): Date | null => {
+    const slot = schedule.find(s => s.id === scheduleId);
+    return slot ? classStart(parseISODate(date), slot.time) : null;
+  };
   const [allNotifications, setAllNotifications] = useState<AppNotification[]>([]);
   const { toast } = useToast();
 
@@ -276,6 +287,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       });
       return;
     }
+    const lessonStart = classStart(parseISODate(date), slot.time);
+    if (lessonStatus(bookingStateRef.current, scheduleId, date, lessonStart, new Date()) === 'cancelled') {
+      toast({
+        title: "Lezione annullata",
+        description: `Non è stato raggiunto il minimo di ${MIN_PARTICIPANTS} partecipanti.`,
+        variant: "destructive",
+      });
+      return;
+    }
     const info = describeSlot(scheduleId, date);
     const { state, outcome } = requestBooking(
       bookingStateRef.current,
@@ -369,6 +389,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     toast({ title: "Uscito dalla lista d'attesa", description: describeSlot(left.scheduleId, left.date).label });
   };
 
+  // Minimum participants: decide lessons whose check time has passed. Runs on mount (so a
+  // check missed while the app was closed still happens) and then every 30 seconds.
+  const runMinimumCheck = () => {
+    const { state, cancelled } = enforceMinimumParticipants(bookingStateRef.current, lessonStartOf, new Date());
+    if (state === bookingStateRef.current) return;
+    setBookingState(state);
+    for (const lesson of cancelled) {
+      const info = describeSlot(lesson.scheduleId, lesson.date);
+      for (const userId of lesson.userIds) {
+        pushNotification(userId, {
+          type: 'lesson_cancelled',
+          title: 'Lezione annullata',
+          message: `${info.label} è annullata: non è stato raggiunto il minimo di ${MIN_PARTICIPANTS} partecipanti. La tua prenotazione è stata cancellata.`,
+          link: '/calendar',
+        });
+      }
+    }
+  };
+  const runMinimumCheckRef = useRef(runMinimumCheck);
+  runMinimumCheckRef.current = runMinimumCheck;
+  useEffect(() => {
+    runMinimumCheckRef.current();
+    const id = window.setInterval(() => runMinimumCheckRef.current(), 30000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const addCourse = (course: Course) => {
     setCourses([...courses, course]);
   };
@@ -380,6 +426,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       schedule,
       bookings,
       waitlist,
+      bookingState,
+      lessonStartOf,
       login,
       logout,
       bookClass,
